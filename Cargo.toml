@@ -150,6 +150,9 @@ borsh = { version = "1.5", features = ["derive"] }
 arrayvec = "0.7"
 criterion = { version = "3", package = "codspeed-criterion-compat" }
 
+[target.'cfg(all(target_os = "zkvm", target_vendor = "risc0"))'.dependencies]
+risc0-bigint2 = { version = "1.4", default-features = false }
+
 [features]
 default = ["std"]
 std = [

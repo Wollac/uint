@@ -35,6 +35,23 @@ impl<const BITS: usize, const LIMBS: usize> Uint<BITS, LIMBS> {
         if modulus.is_zero() {
             return Self::ZERO;
         }
+        #[cfg(all(target_os = "zkvm", target_vendor = "risc0"))]
+        {
+            if BITS == 256 && LIMBS == 4 {
+                let mut result = Self::ZERO;
+                // SAFETY: On RISC-V (little-endian), [u64; 4] and [u32; 8] have
+                // identical memory layout for 256-bit values.
+                unsafe {
+                    risc0_bigint2::field::modadd_256(
+                        &*(self.limbs.as_ptr().cast::<[u32; 8]>()),
+                        &*(rhs.limbs.as_ptr().cast::<[u32; 8]>()),
+                        &*(modulus.limbs.as_ptr().cast::<[u32; 8]>()),
+                        &mut *(result.limbs.as_mut_ptr().cast::<[u32; 8]>()),
+                    );
+                }
+                return result;
+            }
+        }
 
         // This is not going to truncate with the final cast because the modulus value
         // is 64 bits.
@@ -86,6 +103,27 @@ impl<const BITS: usize, const LIMBS: usize> Uint<BITS, LIMBS> {
     #[inline(always)]
     #[must_use]
     pub fn mul_mod(self, rhs: Self, mut modulus: Self) -> Self {
+        #[cfg(all(target_os = "zkvm", target_vendor = "risc0"))]
+        {
+            if BITS == 256 && LIMBS == 4 {
+                if modulus.is_zero() {
+                    return Self::ZERO;
+                }
+                let mut result = Self::ZERO;
+                // SAFETY: On RISC-V (little-endian), [u64; 4] and [u32; 8] have
+                // identical memory layout for 256-bit values.
+                unsafe {
+                    risc0_bigint2::field::modmul_256(
+                        &*(self.limbs.as_ptr().cast::<[u32; 8]>()),
+                        &*(rhs.limbs.as_ptr().cast::<[u32; 8]>()),
+                        &*(modulus.limbs.as_ptr().cast::<[u32; 8]>()),
+                        &mut *(result.limbs.as_mut_ptr().cast::<[u32; 8]>()),
+                    );
+                }
+                return result;
+            }
+        }
+
         self.mul_mod_by_ref(&rhs, &mut modulus);
         modulus
     }
