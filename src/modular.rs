@@ -7,6 +7,26 @@ use crate::{Uint, algorithms};
 // See also <https://static1.squarespace.com/static/61f7cacf2d7af938cad5b81c/t/62deb4e0c434f7134c2730ee/1658762465114/modular_multiplication.pdf>
 // FEATURE: Modular wrapper class, like Wrapping.
 
+#[cfg(all(target_os = "zkvm", target_vendor = "risc0"))]
+macro_rules! risc0_field_op {
+    ($op:path, $lhs:expr, $rhs:expr, $modulus:expr) => {{
+        let mut result = core::mem::MaybeUninit::<Self>::uninit();
+        // SAFETY: `Self` is `#[repr(transparent)]` over `[u64; LIMBS]`, and the
+        // `cfg` guarantees we are on risc0 zkVM (little-endian RV32), so limb
+        // arrays share layout with the syscall's `[u32; _]` arguments. The
+        // syscall fully writes the output, so `assume_init` is sound.
+        unsafe {
+            $op(
+                &*$lhs.limbs.as_ptr().cast(),
+                &*$rhs.limbs.as_ptr().cast(),
+                &*$modulus.limbs.as_ptr().cast(),
+                &mut *result.as_mut_ptr().cast(),
+            );
+            return result.assume_init();
+        }
+    }};
+}
+
 impl<const BITS: usize, const LIMBS: usize> Uint<BITS, LIMBS> {
     /// ⚠️ Compute $\mod{\mathtt{self}}_{\mathtt{modulus}}$.
     ///
@@ -34,6 +54,15 @@ impl<const BITS: usize, const LIMBS: usize> Uint<BITS, LIMBS> {
     pub fn add_mod(mut self, rhs: Self, mut modulus: Self) -> Self {
         if modulus.is_zero() {
             return Self::ZERO;
+        }
+        #[cfg(all(target_os = "zkvm", target_vendor = "risc0"))]
+        {
+            if const { BITS == 256 && LIMBS == 4 } {
+                risc0_field_op!(risc0_bigint2::field::modadd_256, self, rhs, modulus);
+            }
+            if const { BITS == 384 && LIMBS == 6 } {
+                risc0_field_op!(risc0_bigint2::field::modadd_384, self, rhs, modulus);
+            }
         }
 
         // This is not going to truncate with the final cast because the modulus value
@@ -86,6 +115,21 @@ impl<const BITS: usize, const LIMBS: usize> Uint<BITS, LIMBS> {
     #[inline(always)]
     #[must_use]
     pub fn mul_mod(self, rhs: Self, mut modulus: Self) -> Self {
+        #[cfg(all(target_os = "zkvm", target_vendor = "risc0"))]
+        {
+            if const { (BITS == 256 && LIMBS == 4) || (BITS == 384 && LIMBS == 6) } {
+                if modulus.is_zero() {
+                    return Self::ZERO;
+                }
+                if const { BITS == 256 && LIMBS == 4 } {
+                    risc0_field_op!(risc0_bigint2::field::modmul_256, self, rhs, modulus);
+                }
+                if const { BITS == 384 && LIMBS == 6 } {
+                    risc0_field_op!(risc0_bigint2::field::modmul_384, self, rhs, modulus);
+                }
+            }
+        }
+
         self.mul_mod_by_ref(&rhs, &mut modulus);
         modulus
     }
